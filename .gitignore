@@ -74,3 +74,5 @@ USER.md
 
 test-temp/
 *.log
+
+*.md
