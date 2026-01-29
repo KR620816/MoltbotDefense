@@ -11,6 +11,7 @@ import { EventEmitter } from 'events';
 import { DistributedLedgerConfig } from '../config';
 import { Blockchain, Block } from './chain';
 import { Consensus } from './consensus';
+import { OfflineQueueService } from '../services/offline-queue';
 
 export interface Peer {
     id: string; // ip:port
@@ -32,17 +33,21 @@ export class P2PNetwork extends EventEmitter {
     private port: number;
     private blockchain: Blockchain;
     private consensus: Consensus;
+    private offlineQueue?: OfflineQueueService | null;
+    private db?: any; // Avoiding circular dependency for now, passed in optionally or we use an event listener
 
     constructor(
         config: DistributedLedgerConfig,
         blockchain: Blockchain,
-        consensus: Consensus
+        consensus: Consensus,
+        offlineQueue?: OfflineQueueService | null
     ) {
         super();
         this.config = config;
         this.port = config.network.listenPort;
         this.blockchain = blockchain;
         this.consensus = consensus;
+        this.offlineQueue = offlineQueue;
     }
 
     /**
@@ -140,11 +145,27 @@ export class P2PNetwork extends EventEmitter {
      */
     broadcast(message: P2PMessage): void {
         const data = JSON.stringify(message);
+        let sentCount = 0;
+
         for (const peer of this.peers.values()) {
             if (peer.connected) {
-                // TODO: Better delimiting
-                peer.socket.write(data + '\n');
+                try {
+                    // TODO: Better delimiting
+                    peer.socket.write(data + '\n');
+                    sentCount++;
+                } catch (e) {
+                    console.warn(`[P2P] Failed to send to ${peer.id}`);
+                }
             }
+        }
+
+        // If we couldn't send to anyone (Offline), enqueue it
+        if (sentCount === 0 && this.offlineQueue) {
+            console.log(`[P2P] Network offline. Enqueuing message type: ${message.type}`);
+            this.offlineQueue.enqueue(
+                message.type === 'NEW_BLOCK' ? 'broadcast_block' : 'broadcast_pattern' as any, // Simple mapping
+                message.payload
+            ).catch(err => console.error(`[P2P] Queue error: ${err}`));
         }
     }
 
@@ -221,7 +242,8 @@ export class P2PNetwork extends EventEmitter {
         const success = this.blockchain.addBlock(block);
         if (success) {
             console.log('[P2P] Block added to local chain');
-            // propagate? Maybe, to others.
+            this.emit('blockAdded', block); // Emit event for external handlers (like DB sync)
+            this.broadcastNewBlock(block); // Gossip protocol: re-broadcast valid blocks
         } else {
             console.warn('[P2P] Invalid block received');
         }

@@ -16,7 +16,10 @@ import { getPatternDB } from "./db/pattern-db.js";
 import { createAttackTriggerService, type AttackEvent } from "./services/attack-trigger.js";
 import { PatternLearningService } from "./services/pattern-learning.js";
 import { PatternDiscoveryService } from "./services/pattern-discovery.js";
-import { PatternSyncService } from "./services/pattern-sync.js";
+import { KillSwitchService } from "./services/kill-switch.js";
+import { OfflineQueueService } from "./services/offline-queue.js";
+import { DirectivesService } from "./services/directives.js";
+// [REMOVED] PatternSyncService
 import { P2PNetwork } from "./p2p/network.js";
 import { Blockchain } from "./p2p/chain.js";
 import { Consensus } from "./p2p/consensus.js";
@@ -33,16 +36,32 @@ export default function register(api: MoltbotPluginApi): void {
     const db = getPatternDB();
 
     // Initialize Services
+    // Initialize Services
     const triggerService = createAttackTriggerService(config.attackTrigger);
     const learningService = new PatternLearningService(db, config.guardianAi);
     const discoveryService = new PatternDiscoveryService(db, learningService, config.autoDiscovery, config.guardianAi);
-    const syncService = new PatternSyncService(db, config.propagation);
+    const killSwitchService = new KillSwitchService(config.killSwitch, triggerService);
+
+    // Initialize Directives Service
+    // We assume rootDir is accessible, maybe from api.pluginConfig or we assume cwd
+    // api.pluginConfig?.rootDir? For now let's assume Process CWD if not provided, or relative to this file
+    const rootDir = process.cwd(); // CAUTION: this might be where moltbot runs
+    const directivesService = new DirectivesService(path.join(rootDir, 'plugins', 'moltbot-plugin-guardian'));
 
     // Initialize P2P Blockchain
     const nodeId = crypto.randomUUID(); // TODO: Persist Node ID
     const blockchain = new Blockchain(nodeId);
     const consensus = new Consensus(blockchain);
-    p2pNetwork = new P2PNetwork(config.distributedLedger, blockchain, consensus);
+
+    // Initialize Offline Queue
+    // Fix: Ensure we get a string path, defaulting to ./data if undefined or not a string
+    const stateDir = (typeof api.pluginConfig === 'object' && api.pluginConfig !== null && 'stateDir' in api.pluginConfig
+        ? (api.pluginConfig as any).stateDir
+        : './data');
+
+    const offlineQueue = new OfflineQueueService(path.resolve(stateDir as string));
+
+    const p2pNetwork = new P2PNetwork(config.distributedLedger, blockchain, consensus, offlineQueue);
 
     // Wire up events: Trigger -> Learning -> Sync (API & P2P)
     triggerService.on('patternsReady', async (patterns: AttackEvent[]) => {
@@ -52,12 +71,7 @@ export default function register(api: MoltbotPluginApi): void {
             if (result.success && result.category && result.pattern) {
                 api.logger.info(`[guardian] Learned new pattern: ${result.category}`);
 
-                // 1. Sync: Push pattern via API
-                syncService.pushPattern({
-                    category: result.category,
-                    pattern: result.pattern,
-                    severity: p.severity
-                }).catch(err => api.logger.error(`[guardian] Sync push failed: ${err}`));
+                // 1. [REMOVED] API Push
 
                 // 2. Sync: Propagate block via P2P
                 if (config.distributedLedger.enabled) {
@@ -71,6 +85,10 @@ export default function register(api: MoltbotPluginApi): void {
                     if (blockchain.addBlock(block)) {
                         p2pNetwork?.broadcastNewBlock(block);
                         api.logger.info(`[guardian] P2P Block broadcasted: index ${block.index}`);
+
+                        // NEW: Directly add to local DB as well (since we mined it)
+                        // Note: PatternLearningService already saved it, so strictly speaking
+                        // we don't need to re-add it from the block, but it confirms consistency.
                     }
                 }
             }
@@ -78,13 +96,29 @@ export default function register(api: MoltbotPluginApi): void {
     });
 
     // Wire up P2P Events
-    p2pNetwork.on('message', (msg, peer) => {
-        api.logger.debug(`[guardian] P2P Message from ${peer.id}: ${msg.type}`);
+    p2pNetwork?.on('message', (msg, peer) => {
+        api.logger?.debug?.(`[guardian] P2P Message from ${peer.id}: ${msg.type}`);
+    });
+
+    // Sync: P2P Block -> Local DB
+    p2pNetwork?.on('blockAdded', async (block: any) => {
+        api.logger.info(`[guardian] Syncing block ${block.index} to PatternDB...`);
+        const patterns = block.patterns.map((p: any) => ({
+            category: p.category,
+            pattern: p.pattern,
+            severity: p.severity
+        }));
+
+        const result = await db.addPatterns(patterns as any);
+        if (result.added > 0) {
+            await db.save();
+            api.logger.info(`[guardian] Synced ${result.added} patterns from P2P block`);
+        }
     });
 
     // Initialize Guardian Pipe
     guardianPipe = new GuardianPipe(config, api.logger);
-    guardianPipe.setServices(triggerService);
+    guardianPipe.setServices(triggerService, directivesService);
 
     // Hook: before_tool_call
     api.on(
@@ -106,7 +140,9 @@ export default function register(api: MoltbotPluginApi): void {
             api.logger.info("[guardian] Starting services");
             await guardianPipe?.initializeDatabase(ctx.stateDir);
 
-            syncService.start();
+            await guardianPipe?.initializeDatabase(ctx.stateDir);
+
+            // [REMOVED] syncService.start()
 
             // Start P2P
             if (config.distributedLedger.enabled) {
@@ -126,13 +162,31 @@ export default function register(api: MoltbotPluginApi): void {
                     api.logger.error(`[guardian] Discovery failed: ${err}`);
                 });
             }
+
+            // Load Directives
+            await directivesService.loadDirectives();
+            api.logger.info("[guardian] Directives loaded");
+
+            // Start Offline Queue Initialization
+            offlineQueue.initialize().then(() => {
+                api.logger.info("[guardian] Offline Queue initialized");
+            });
+
+            // Start Kill Switch Service
+            if (config.killSwitch.enabled) {
+                killSwitchService.start();
+                api.logger.info("[guardian] Kill Switch Service started");
+            }
         },
         stop: async () => {
             api.logger.info("[guardian] Stopping services");
             guardianPipe?.close();
             triggerService.stop();
             discoveryService.stop();
-            syncService.stop();
+            triggerService.stop();
+            discoveryService.stop();
+            // [REMOVED] syncService.stop();
+            p2pNetwork?.stop();
             p2pNetwork?.stop();
         },
     });

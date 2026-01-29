@@ -26,6 +26,11 @@ export interface AttackEvent {
         userAgent?: string;
         endpoint?: string;
         requestId?: string;
+        sessionKey?: string;
+        agentId?: string;
+        toolName?: string;
+        containerName?: string;
+        [key: string]: any;
     };
 }
 

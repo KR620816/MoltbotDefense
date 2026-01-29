@@ -14,6 +14,7 @@ import { GuardianAI } from "./stages/guardian-ai.js";
 import { JsonParser } from "./stages/json-parser.js";
 import type { GuardianConfig } from "./config.js";
 import { AttackTriggerService } from "./services/attack-trigger.js";
+import { DirectivesService } from "./services/directives.js";
 
 export interface ValidationInput {
     text: string;
@@ -57,6 +58,7 @@ export class GuardianPipe {
 
     // Services
     public attackTriggerService: AttackTriggerService | null = null;
+    public directivesService: DirectivesService | null = null;
 
     constructor(
         private config: GuardianConfig,
@@ -70,15 +72,20 @@ export class GuardianPipe {
         this.jsonParser = new JsonParser();
     }
 
-    setServices(triggerService: AttackTriggerService): void {
+    setServices(triggerService: AttackTriggerService, directivesService?: DirectivesService): void {
         this.attackTriggerService = triggerService;
+        if (directivesService) {
+            this.directivesService = directivesService;
+            this.guardianAI.setDirectivesService(directivesService);
+        }
     }
 
     private recordAttack(
         source: 'regex' | 'ai' | 'heuristic' | 'rateLimit' | 'unknown',
         pattern: string,
         severity: 'critical' | 'high' | 'medium' | 'low',
-        input: string
+        input: string,
+        metadata: Record<string, any> = {}
     ): void {
         if (!this.attackTriggerService) return;
 
@@ -89,7 +96,7 @@ export class GuardianPipe {
             pattern,
             rawInput: input,
             severity,
-            metadata: {}
+            metadata
         });
     }
 
@@ -131,6 +138,12 @@ export class GuardianPipe {
             durationMs: 0,
         };
 
+        const metadata = {
+            sessionKey: input.sessionKey,
+            agentId: input.agentId,
+            toolName: input.toolName
+        };
+
         // Guardian disabled = instant pass
         if (!this.enabled) {
             result.durationMs = Date.now() - startTime;
@@ -152,7 +165,7 @@ export class GuardianPipe {
                 result.blockReason = `REGEX_MATCH: ${regexResult.matched?.[0] ?? "unknown"}`;
                 result.durationMs = Date.now() - startTime;
                 this.logger.warn(`[guardian] Blocked by regex: ${result.blockReason}`);
-                this.recordAttack('regex', regexResult.matched?.[0] ?? "unknown", 'critical', input.text);
+                this.recordAttack('regex', regexResult.matched?.[0] ?? "unknown", 'critical', input.text, metadata);
                 return result;
             }
         }
@@ -170,7 +183,7 @@ export class GuardianPipe {
                 result.blockReason = `PATTERN_MATCH: ${patternResult.matches?.[0]?.category ?? "unknown"}`;
                 result.durationMs = Date.now() - startTime;
                 this.logger.warn(`[guardian] Blocked by pattern: ${result.blockReason}`);
-                this.recordAttack('heuristic', patternResult.matches?.[0]?.category ?? "unknown", 'high', input.text);
+                this.recordAttack('heuristic', patternResult.matches?.[0]?.category ?? "unknown", 'high', input.text, metadata);
                 return result;
             }
         }
@@ -207,7 +220,7 @@ export class GuardianPipe {
                         : "GUARDIAN_BLOCKED";
                     result.durationMs = Date.now() - startTime;
                     this.logger.warn(`[guardian] Blocked by parser: ${result.blockReason}`);
-                    this.recordAttack('ai', 'AI detected malicious intent', 'critical', input.text);
+                    this.recordAttack('ai', 'AI detected malicious intent', 'critical', input.text, metadata);
                     return result;
                 }
             }

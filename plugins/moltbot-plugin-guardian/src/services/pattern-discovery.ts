@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { PatternDB } from '../db/pattern-db';
 import { PatternLearningService } from './pattern-learning';
 import { AutoDiscoveryConfig, GuardianAiConfig } from '../config';
+import { ExecutionIsolationService } from './execution-isolation';
 
 // ========== Types ==========
 
@@ -52,6 +53,7 @@ export class PatternDiscoveryService {
     private config: AutoDiscoveryConfig;
     private aiConfig: GuardianAiConfig;
     private aiClient: OpenAI;
+    private executionService: ExecutionIsolationService;
     private isRunning: boolean = false;
     public delayLoopMs: number = 1000;
 
@@ -66,6 +68,7 @@ export class PatternDiscoveryService {
         this.learningService = learningService;
         this.config = config;
         this.aiConfig = aiConfig;
+        this.executionService = new ExecutionIsolationService();
 
         this.aiClient = aiClient || new OpenAI({
             baseURL: aiConfig.baseUrl,
@@ -95,6 +98,9 @@ export class PatternDiscoveryService {
         console.log(`🔍 [Guardian] Starting auto pattern discovery. Target: ${this.config.targetCount}`);
 
         try {
+            // Initialize Docker/Execution Service
+            await this.executionService.initialize();
+
             // 타임아웃 Promise
             const timeoutPromise = new Promise<void>((_, reject) => {
                 setTimeout(() => reject(new Error('Timeout')), this.config.timeoutMinutes * 60 * 1000);
@@ -117,6 +123,28 @@ export class PatternDiscoveryService {
                         continue;
                     }
 
+                    // Execution Layer: Validate pattern using isolated Python script
+                    // This prevents learning garbage patterns or crashing Node process with complex regex
+                    const execResult = await this.executionService.executePythonScript('analyze_pattern.py', {
+                        text: patternData.pattern || ''
+                    });
+
+                    let riskScore = 0;
+                    if (execResult.success && execResult.output) {
+                        riskScore = execResult.output.risk_score || 0;
+                        console.log(`🧪 [Execution] Analysis Result: Risk=${riskScore}, Matches=${execResult.output.matches?.join(', ')}`);
+                    } else {
+                        console.warn(`⚠️ [Execution] Script failed: ${execResult.error}`);
+                    }
+
+                    // Only save if risk score is significant or AI is confident
+                    // If script fails (e.g. no docker), fallback to AI confidence
+                    if (execResult.success && riskScore < 0.2) {
+                        console.log(`⏭️ [Guardian] Low risk pattern ignored: ${patternData.pattern}`);
+                        failCount++;
+                        continue;
+                    }
+
                     // 학습 (PatternLearningService 재사용 - 중복체크, 저장 등 포함)
                     const result = await this.learningService.learnFromEvent({
                         id: `auto_${Date.now()}`,
@@ -125,7 +153,10 @@ export class PatternDiscoveryService {
                         pattern: patternData.pattern,
                         rawInput: patternData.pattern,
                         severity: patternData.severity as any,
-                        metadata: {}
+                        metadata: {
+                            executionRiskScore: riskScore,
+                            executionMatches: execResult.output?.matches
+                        }
                     });
 
                     if (result.success) {

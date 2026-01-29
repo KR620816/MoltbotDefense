@@ -57,25 +57,10 @@ export interface AttackTriggerConfig {
     };
 }
 
-export interface PropagationPushConfig {
+// [REMOVED] PropagationConfig related interfaces
+export interface KillSwitchConfig {
     enabled: boolean;
-    immediate: boolean;
-    requireApproval: boolean;
-}
-
-export interface PropagationPullConfig {
-    enabled: boolean;
-    intervalMinutes: number;
-    onStartup: boolean;
-}
-
-export interface PropagationConfig {
-    enabled: boolean;
-    mode: "api" | "p2p" | "local";
-    apiEndpoint: string;
-    apiKey: string;
-    push: PropagationPushConfig;
-    pull: PropagationPullConfig;
+    autoAction: 'pause' | 'stop' | 'none';
 }
 
 export interface DistributedLedgerNetworkConfig {
@@ -92,16 +77,9 @@ export interface DistributedLedgerConsensusConfig {
 
 export interface DistributedLedgerConfig {
     enabled: boolean;
-    mode: "p2p";
     network: DistributedLedgerNetworkConfig;
     consensus: DistributedLedgerConsensusConfig;
-    sync: {
-        onStartup: boolean;
-        interval: number;
-    };
 }
-
-// ========== 메인 설정 ==========
 
 export interface GuardianConfig {
     enabled: boolean;
@@ -109,10 +87,9 @@ export interface GuardianConfig {
     guardianAi: GuardianAiConfig;
     blockedTools: string[];
     logging: GuardianLoggingConfig;
-    // 멀티방어전략4 신규 설정
     autoDiscovery: AutoDiscoveryConfig;
     attackTrigger: AttackTriggerConfig;
-    propagation: PropagationConfig;
+    killSwitch: KillSwitchConfig;
     distributedLedger: DistributedLedgerConfig;
 }
 
@@ -137,9 +114,8 @@ export const DEFAULT_CONFIG: GuardianConfig = {
         enabled: true,
         retentionDays: 30,
     },
-    // 멀티방어전략4 기본값
     autoDiscovery: {
-        enabled: false, // 기본 비활성화, 명시적 활성화 필요
+        enabled: false,
         targetCount: 10,
         timeoutMinutes: 10,
         runOnStartup: true,
@@ -163,48 +139,25 @@ export const DEFAULT_CONFIG: GuardianConfig = {
             flushIntervalMs: 30000,
         },
     },
-    propagation: {
-        enabled: false, // 기본 비활성화
-        mode: "local",
-        apiEndpoint: "https://patterns.moltbot.io/api/v1",
-        apiKey: "",
-        push: {
-            enabled: true,
-            immediate: true,
-            requireApproval: false,
-        },
-        pull: {
-            enabled: true,
-            intervalMinutes: 30,
-            onStartup: true,
-        },
+    killSwitch: {
+        enabled: true,
+        autoAction: 'pause'
     },
     distributedLedger: {
-        enabled: false, // 기본 비활성화
-        mode: "p2p",
+        enabled: true,
         network: {
-            bootstrapNodes: [
-                "node1.moltbot.io:6881",
-                "node2.moltbot.io:6881",
-            ],
+            bootstrapNodes: [],
             listenPort: 6881,
             maxPeers: 50,
         },
         consensus: {
-            minValidators: 3,
+            minValidators: 1,
             approvalThreshold: 0.51,
             blockInterval: 60000,
-        },
-        sync: {
-            onStartup: true,
-            interval: 300000,
-        },
+        }
     },
 };
 
-/**
- * Merge user config with defaults
- */
 export function mergeConfig(userConfig?: Partial<GuardianConfig>): GuardianConfig {
     if (!userConfig) return DEFAULT_CONFIG;
 
@@ -243,17 +196,9 @@ export function mergeConfig(userConfig?: Partial<GuardianConfig>): GuardianConfi
                 ...userConfig.attackTrigger?.autoSave,
             },
         },
-        propagation: {
-            ...DEFAULT_CONFIG.propagation,
-            ...userConfig.propagation,
-            push: {
-                ...DEFAULT_CONFIG.propagation.push,
-                ...userConfig.propagation?.push,
-            },
-            pull: {
-                ...DEFAULT_CONFIG.propagation.pull,
-                ...userConfig.propagation?.pull,
-            },
+        killSwitch: {
+            ...DEFAULT_CONFIG.killSwitch,
+            ...userConfig.killSwitch
         },
         distributedLedger: {
             ...DEFAULT_CONFIG.distributedLedger,
@@ -265,10 +210,6 @@ export function mergeConfig(userConfig?: Partial<GuardianConfig>): GuardianConfi
             consensus: {
                 ...DEFAULT_CONFIG.distributedLedger.consensus,
                 ...userConfig.distributedLedger?.consensus,
-            },
-            sync: {
-                ...DEFAULT_CONFIG.distributedLedger.sync,
-                ...userConfig.distributedLedger?.sync,
             },
         },
     };

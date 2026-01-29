@@ -53,7 +53,7 @@ const GUARDIAN_SYSTEM_PROMPT = `# Guardian AI - 보안 검증 전용
 export class GuardianAI {
     private client: OpenAI;
     private config: GuardianAiConfig;
-    private logger: PluginLogger;
+    private directivesService: any = null; // using any to avoid circular import or create type interface
 
     constructor(config: GuardianAiConfig, logger: PluginLogger) {
         this.config = config;
@@ -69,17 +69,31 @@ export class GuardianAI {
         this.logger.info(`[guardian-ai] Initialized with baseUrl: ${config.baseUrl}`);
     }
 
+    setDirectivesService(service: any): void {
+        this.directivesService = service;
+    }
+
     /**
      * Validate input text using LLM
      */
     async validate(text: string): Promise<StageResult> {
         try {
+            let systemPrompt = GUARDIAN_SYSTEM_PROMPT;
+
+            // Inject Directives if available
+            if (this.directivesService) {
+                const sops = this.directivesService.getAllDirectivesContext();
+                if (sops) {
+                    systemPrompt += `\n\n${sops}`;
+                }
+            }
+
             const response = await this.client.chat.completions.create({
                 model: this.config.model,
                 max_tokens: this.config.maxTokens,
                 temperature: 0, // Deterministic output
                 messages: [
-                    { role: "system", content: GUARDIAN_SYSTEM_PROMPT },
+                    { role: "system", content: systemPrompt },
                     { role: "user", content: `다음 텍스트를 검증하세요:\n\n${text}` },
                 ],
             });
