@@ -1,0 +1,30 @@
+{
+    "name": "moltbot-plugin-guardian",
+    "version": "1.0.0",
+    "description": "Guardian Security Module - 4-stage validation pipeline with ON/OFF toggle",
+    "type": "module",
+    "main": "dist/index.js",
+    "moltbot": {
+        "extensions": [
+            "dist/index.js"
+        ]
+    },
+    "scripts": {
+        "build": "tsc",
+        "dev": "tsc --watch",
+        "test": "vitest"
+    },
+    "dependencies": {
+        "openai": "^4.0.0",
+        "better-sqlite3": "^11.0.0"
+    },
+    "devDependencies": {
+        "@types/better-sqlite3": "^7.6.0",
+        "@types/node": "^22.0.0",
+        "typescript": "^5.0.0",
+        "vitest": "^2.0.0"
+    },
+    "peerDependencies": {
+        "moltbot": "*"
+    }
+}

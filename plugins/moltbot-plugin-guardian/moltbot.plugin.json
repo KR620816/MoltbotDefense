@@ -1,0 +1,102 @@
+{
+    "id": "guardian",
+    "name": "Guardian Security Module",
+    "version": "1.0.0",
+    "description": "4-stage security validation pipeline with ON/OFF toggle for Moltbot",
+    "configSchema": {
+        "type": "object",
+        "properties": {
+            "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Guardian 모듈 활성화 여부"
+            },
+            "stages": {
+                "type": "object",
+                "properties": {
+                    "regex": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "patternDb": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "guardianAi": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "jsonParser": {
+                        "type": "boolean",
+                        "default": true
+                    }
+                },
+                "default": {
+                    "regex": true,
+                    "patternDb": true,
+                    "guardianAi": true,
+                    "jsonParser": true
+                }
+            },
+            "guardianAi": {
+                "type": "object",
+                "properties": {
+                    "provider": {
+                        "type": "string",
+                        "enum": [
+                            "anthropic",
+                            "openai-compatible"
+                        ],
+                        "default": "openai-compatible"
+                    },
+                    "baseUrl": {
+                        "type": "string",
+                        "default": "http://127.0.0.1:1234/v1"
+                    },
+                    "model": {
+                        "type": "string",
+                        "default": "local-model"
+                    },
+                    "apiKey": {
+                        "type": "string",
+                        "default": "lm-studio"
+                    },
+                    "maxTokens": {
+                        "type": "number",
+                        "default": 100
+                    },
+                    "timeoutMs": {
+                        "type": "number",
+                        "default": 5000
+                    }
+                }
+            },
+            "blockedTools": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "default": [
+                    "exec",
+                    "write",
+                    "browser",
+                    "send_email"
+                ]
+            },
+            "logging": {
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "default": true
+                    },
+                    "retentionDays": {
+                        "type": "number",
+                        "default": 30
+                    }
+                }
+            }
+        },
+        "required": []
+    }
+}
